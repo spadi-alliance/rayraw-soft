@@ -1,0 +1,27 @@
+# Range: 0 - 32
+# 0 disables Self Trigger
+hit_threshold 2
+
+# Range: 0 - 15
+latch_window 4
+
+# Number of geometry conditions. 0 accepts any channel combination.
+num_geometry_conditions 2
+
+# index: required TDC channels
+0:	0
+1:	1 2
+2:	3 4 5
+3:	6 7 8 9
+4:	10 11 12 13 14
+5:	15 16 17 18 19 20
+6:	21 22 23 24 25 26 27
+7:	28 29 30 31 0 1 2 3
+8:	0
+9:	1
+10:	2
+11:
+12:
+13:
+14:
+15:

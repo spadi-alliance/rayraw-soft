@@ -7,14 +7,18 @@ set(MY_PUB_HEADER
   "AdcFuncs.hh"
   )
 
+file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/config)
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/self_trig.txt ${CMAKE_BINARY_DIR}/config/self_trig.txt COPYONLY)
+
 foreach(val IN ITEMS
     daq
     )
 
-  set(MY_OUTPUT_NAME ${val})  
+  set(MY_OUTPUT_NAME ${val})
   set(MY_TARGET ${FW_NAME}_${val})
   add_executable(${MY_TARGET}
     ${MY_OUTPUT_NAME}_main.cc
+    MhTdcFuncs.cc
     )
 
   if(${MYDEBUG})
@@ -39,9 +43,9 @@ foreach(val IN ITEMS
     PUBLIC_HEADER "${MY_PUB_HEADER}"
     )
 
-
   install(TARGETS ${MY_TARGET}
     RUNTIME       DESTINATION ${CMAKE_INSTALL_PREFIX}/${FW_NAME}/bin
     PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_PREFIX}/${FW_NAME}/include
     )
 endforeach()
+
