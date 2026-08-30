@@ -1,277 +1,82 @@
 #include "MhTdcFuncs.hh"
 
-#include <filesystem>
-#include <fstream>
-#include <iostream>
-#include <sstream>
-#include <stdexcept>
-#include <string>
+#include "FPGAModule.hh"
+#include "RegisterMap.hh"
+#include "SelfTriggerConfig.hh"
 
-#ifndef RAYRAW_CONFIG_DIR
-#define RAYRAW_CONFIG_DIR "."
-#endif
+#include <cstddef>
 
 namespace HUL::DAQ
 {
 	namespace
 	{
-		constexpr uint64_t kMaxHitThreshold       = 32;
-		constexpr uint64_t kMaxLatchWindow        = 15;
-		constexpr uint64_t kMaxGeometryConditions = 16;
-		constexpr uint64_t kNumTdcChannels        = 32;
+		const std::uint32_t kCMax      = 2047;
+		const std::uint32_t kPtrDiffWr = 2;
 
-		std::filesystem::path FindSelfTriggerConfig()
+		std::uint32_t GeometryMaskAt(const SelfTriggerConfig &config, std::uint32_t index)
 		{
-			const std::filesystem::path local_path = std::filesystem::path("config") / "self_trig.txt";
-
-			if (std::filesystem::is_regular_file(local_path))
+			if (index >= config.geometry_masks.size())
 			{
-				return local_path;
+				return 0;
 			}
 
-			throw std::runtime_error("self_trig.txt was not found (searched " + local_path.string() + ")");
-		}
-
-		uint64_t ParseUnsigned(const std::string &text, std::size_t line_number)
-		{
-			std::size_t parsed_length = 0;
-
-			try
-			{
-				const uint64_t value = std::stoull(text, &parsed_length, 0);
-
-				if (parsed_length != text.size())
-				{
-					throw std::invalid_argument("trailing characters");
-				}
-
-				return value;
-			}
-			catch (const std::exception &)
-			{
-				throw std::runtime_error("Invalid value at line " + std::to_string(line_number) + ": " + text);
-			}
-		}
-
-		std::string ReadValue(std::istringstream &line_stream, const std::string &key, std::size_t line_number)
-		{
-			std::string value;
-
-			if (!(line_stream >> value))
-			{
-				throw std::runtime_error("Missing " + key + " value at line " + std::to_string(line_number));
-			}
-
-			return value;
-		}
-
-		void RejectExtraValue(std::istringstream &line_stream, std::size_t line_number)
-		{
-			std::string extra;
-
-			if (line_stream >> extra)
-			{
-				throw std::runtime_error("Unexpected value at line " + std::to_string(line_number) + ": " + extra);
-			}
+			return config.geometry_masks[index];
 		}
 	}
 
-	SelfTriggerConfig LoadSelfTriggerConfig()
+	void SetTdcSelfTrigger(const SelfTriggerConfig &config, HUL::FPGAModule &fpga_module)
 	{
-		const std::filesystem::path filename = FindSelfTriggerConfig();
+		// Disable the trigger while its related registers are being updated.
+		fpga_module.WriteModule(LBUS::TDC::kAddrSelfHitThreshold, 0);
+		fpga_module.WriteModule(LBUS::TDC::kAddrSelfLatchWindow, config.latch_window);
 
-		std::cout << "#D: Self Trigger config: " << std::filesystem::absolute(filename) << std::endl;
-
-		std::ifstream input(filename);
-
-		if (!input.is_open())
+		for (std::uint32_t index = 0; index < LBUS::TDC::kMaxSelfGeometry; ++index)
 		{
-			throw std::runtime_error("Cannot open Self Trigger config: " + filename.string());
+			fpga_module.WriteModule(LBUS::TDC::kAddrSelfGeometryBase + index * LBUS::TDC::kSelfGeometryStride, GeometryMaskAt(config, index), 4);
 		}
 
-		SelfTriggerConfig config;
-		bool threshold_found = false;
-		bool latch_window_found = false;
-		bool geometry_count_found = false;
-		std::size_t expected_geometry_count = 0;
-		std::string line;
-		std::size_t line_number = 0;
+		fpga_module.WriteModule(LBUS::TDC::kAddrSelfGeometryCount, static_cast<std::uint32_t>(config.geometry_masks.size()));
 
-		while (std::getline(input, line))
+		// Enable the trigger only after all related registers have been updated.
+		fpga_module.WriteModule(LBUS::TDC::kAddrSelfHitThreshold, config.hit_threshold);
+	}
+
+	bool VerifyTdcSelfTrigger(const SelfTriggerConfig &config, HUL::FPGAModule &fpga_module)
+	{
+		if (fpga_module.ReadModule(LBUS::TDC::kAddrSelfHitThreshold) != config.hit_threshold)
 		{
-			++line_number;
-
-			const std::size_t comment_position = line.find('#');
-
-			if (comment_position != std::string::npos)
-			{
-				line.erase(comment_position);
-			}
-
-			std::istringstream line_stream(line);
-			std::string key;
-
-			if (!(line_stream >> key))
-			{
-				continue;
-			}
-
-			if (key == "hit_threshold")
-			{
-				if (threshold_found)
-				{
-					throw std::runtime_error("Duplicate hit_threshold at line " + std::to_string(line_number));
-				}
-
-				const uint64_t value =
-					ParseUnsigned(ReadValue(line_stream, key, line_number), line_number);
-
-				if (value > kMaxHitThreshold)
-				{
-					throw std::runtime_error("hit_threshold must be 0..32");
-				}
-
-				RejectExtraValue(line_stream, line_number);
-				config.hit_threshold = static_cast<uint32_t>(value);
-				threshold_found = true;
-				continue;
-			}
-
-			if (key == "latch_window")
-			{
-				if (latch_window_found)
-				{
-					throw std::runtime_error("Duplicate latch_window at line " + std::to_string(line_number));
-				}
-
-				const uint64_t value =
-					ParseUnsigned(ReadValue(line_stream, key, line_number), line_number);
-
-				if (value > kMaxLatchWindow)
-				{
-					throw std::runtime_error("latch_window must be 0..15");
-				}
-
-				RejectExtraValue(line_stream, line_number);
-				config.latch_window = static_cast<uint32_t>(value);
-				latch_window_found = true;
-				continue;
-			}
-
-			if (key == "num_geometry_conditions")
-			{
-				if (geometry_count_found)
-				{
-					throw std::runtime_error("Duplicate num_geometry_conditions at line " + std::to_string(line_number));
-				}
-
-				const uint64_t count =
-					ParseUnsigned(ReadValue(line_stream, key, line_number), line_number);
-
-				if (count > kMaxGeometryConditions)
-				{
-					throw std::runtime_error("num_geometry_conditions must be 0..16");
-				}
-
-				RejectExtraValue(line_stream, line_number);
-				expected_geometry_count = static_cast<std::size_t>(count);
-				geometry_count_found = true;
-				continue;
-			}
-
-			if (key.back() != ':')
-			{
-				throw std::runtime_error("Unknown key at line " + std::to_string(line_number) + ": " + key);
-			}
-
-			if (!geometry_count_found)
-			{
-				throw std::runtime_error("num_geometry_conditions must precede geometry entries");
-			}
-
-			if (config.geometry_masks.size() >= expected_geometry_count)
-			{
-				throw std::runtime_error("Too many geometry conditions at line " + std::to_string(line_number));
-			}
-
-			key.pop_back();
-			const uint64_t index = ParseUnsigned(key, line_number);
-
-			if (index >= kMaxGeometryConditions)
-			{
-				throw std::runtime_error("geometry index must be 0..15");
-			}
-
-			if (index != config.geometry_masks.size())
-			{
-				throw std::runtime_error("geometry indices must be contiguous from 0 at line " + std::to_string(line_number));
-			}
-
-			uint32_t mask = 0;
-			std::string channel_text;
-
-			while (line_stream >> channel_text)
-			{
-				const uint64_t channel = ParseUnsigned(channel_text, line_number);
-
-				if (channel >= kNumTdcChannels)
-				{
-					throw std::runtime_error("TDC channel must be 0..31 at line " + std::to_string(line_number));
-				}
-
-				const uint32_t channel_bit = uint32_t{1} << channel;
-
-				if ((mask & channel_bit) != 0)
-				{
-					throw std::runtime_error("Duplicate TDC channel at line " + std::to_string(line_number));
-				}
-
-				mask |= channel_bit;
-			}
-
-			if (mask == 0)
-			{
-				throw std::runtime_error("Geometry must contain at least one channel at line " + std::to_string(line_number));
-			}
-
-			config.geometry_masks.push_back(mask);
+			return false;
 		}
 
-		if (input.bad())
+		if (fpga_module.ReadModule(LBUS::TDC::kAddrSelfLatchWindow) != config.latch_window)
 		{
-			throw std::runtime_error("Failed while reading Self Trigger config: " + filename.string());
+			return false;
 		}
 
-		if (!threshold_found)
+		if (fpga_module.ReadModule(LBUS::TDC::kAddrSelfGeometryCount) != static_cast<std::uint32_t>(config.geometry_masks.size()))
 		{
-			throw std::runtime_error("hit_threshold is not specified");
+			return false;
 		}
 
-		if (!latch_window_found)
+		for (std::uint32_t index = 0; index < LBUS::TDC::kMaxSelfGeometry; ++index)
 		{
-			throw std::runtime_error("latch_window is not specified");
+			const std::uint32_t actual_mask = fpga_module.ReadModule(LBUS::TDC::kAddrSelfGeometryBase + index * LBUS::TDC::kSelfGeometryStride, 4);
+
+			if (actual_mask != GeometryMaskAt(config, index))
+			{
+				return false;
+			}
 		}
 
-		if (!geometry_count_found)
-		{
-			throw std::runtime_error("num_geometry_conditions is not specified");
-		}
+		return true;
+	}
 
-		if (config.geometry_masks.size() != expected_geometry_count)
-		{
-			throw std::runtime_error("Expected " + std::to_string(expected_geometry_count) + " geometry conditions, but found " + std::to_string(config.geometry_masks.size()));
-		}
+	void SetTdcWindow(std::uint32_t wmax, std::uint32_t wmin, HUL::FPGAModule &fpga_module)
+	{
+		const std::uint32_t ptr_ofs = kCMax - wmax + kPtrDiffWr;
 
-		std::cout << "#D: Hit threshold: " << config.hit_threshold << '\n';
-		std::cout << "#D: Latch window: " << config.latch_window << '\n';
-		std::cout << "#D: Geometry count: " << config.geometry_masks.size() << '\n';
-
-		for (std::size_t i = 0; i < config.geometry_masks.size(); ++i)
-		{
-			std::cout << "#D: Geometry " << i << ": 0x" << std::hex << config.geometry_masks[i] << std::dec << '\n';
-		}
-
-		return config;
+		fpga_module.WriteModule(LBUS::TDC::kAddrPtrOfs, ptr_ofs, 2);
+		fpga_module.WriteModule(LBUS::TDC::kAddrWindowMax, wmax, 2);
+		fpga_module.WriteModule(LBUS::TDC::kAddrWindowMin, wmin, 2);
 	}
 }
-

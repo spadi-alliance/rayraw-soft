@@ -66,9 +66,11 @@ namespace LBUS
 			kAddrSelfGeometryBase  = 0x31000000	 // W/R, [15:0][31:0] geometry condition array
 		};
 
-		static constexpr uint32_t kSelfGeometryStride = 0x00100000;
-		static constexpr uint32_t kNumSelfGeometryMax = 16;
-		static constexpr uint32_t kNumTdcChannels     = 32;
+		static constexpr uint32_t kSelfGeometryStride  = 0x00100000;
+		static constexpr uint32_t kNumTdcChannels      = 32;
+		static constexpr uint32_t kMaxSelfGeometry     = 16;
+		static constexpr uint32_t kMaxSelfHitThreshold = 32;
+		static constexpr uint32_t kMaxSelfLatchWindow  = 15;
 
 		enum TdcBlock
 		{
@@ -137,11 +139,11 @@ namespace LBUS
 			kAddrWindowMin     = 0x50200000,	 // W/R, [10:0] Search window min
 			kAddrAdcRoReset    = 0x50300000,	 // W/R, [0:0]  AdcRo reset signal
 			kAddrAdcRoIsReady  = 0x50400000,	 // R,   [3:0]  AdcRo IsReady signals
-			kAddrEnableZeroSup = 0x50500000,	 // W/R, [0:0] Enable Zero Suppression
+			kAddrEnableZeroSup = 0x50500000,	 // W/R, [0:0]  Enable Zero Suppression
+			kAddrHitTimeout    = 0x50600000,     // W/R, [7:0]  Hit Timeout
 		};
 	};
 
 };
 
 #endif
-
